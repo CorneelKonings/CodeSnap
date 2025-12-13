@@ -49,10 +49,20 @@ export default function App() {
 
   // Logic to determine if an email is worth sending to AI
   const needsAnalysis = (email: EmailMessage): boolean => {
+    // FORCE SCAN: If email is younger than 5 minutes, ALWAYS scan it.
+    // This solves issues with test emails not having specific keywords.
+    const emailDate = new Date(parseInt(email.internalDate));
+    const now = new Date();
+    const ageInMinutes = (now.getTime() - emailDate.getTime()) / 60000;
+    
+    if (ageInMinutes < 5) {
+      console.log(`Force scanning recent email (${ageInMinutes.toFixed(1)}m old): ${email.subject}`);
+      return true;
+    }
+
     const combinedText = (email.subject + " " + email.body).toLowerCase();
     
-    // Improved Regex to catch more formats:
-    // Matches: 123456, 123-456, 123 456, A1B2C3, R5T21 (Alphanumeric 4-8 chars)
+    // Improved Regex to catch more formats
     const hasPossibleCode = /\b[a-z0-9]{4,8}\b|\b\d{3}[- ]\d{3}\b/i.test(combinedText);
     
     const keywords = [
@@ -66,6 +76,47 @@ export default function App() {
     return hasPossibleCode || hasKeyword;
   };
 
+  const processEmail = async (email: EmailMessage, manual = false) => {
+     setScanningStatus(`Analyseren: ${email.subject.substring(0, 25)}...`);
+     
+     const result = await analyzeEmailContent(email.body || email.snippet);
+     
+     if (result && result.hasCode) {
+        const newCode: ExtractedCode = {
+          id: email.id,
+          serviceName: result.serviceName || email.sender.split('<')[0].replace(/"/g, '').trim(),
+          code: result.code,
+          timestamp: new Date(parseInt(email.internalDate)),
+          rawEmailPreview: email.snippet
+        };
+
+        setCodes(prev => {
+           if (prev.some(pc => pc.id === newCode.id)) return prev;
+
+           if (!manual) {
+               showToast(`Nieuwe code gevonden!`);
+               const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
+               audio.volume = 0.5;
+               audio.play().catch(() => {});
+               sendSystemNotification(
+                 `${newCode.serviceName}: ${newCode.code}`,
+                 `Tik hier om code te kopiëren`,
+                 () => {
+                   navigator.clipboard.writeText(newCode.code);
+                   window.focus();
+                 }
+               );
+           } else {
+             showToast("Code handmatig opgehaald!");
+           }
+           
+           return [newCode, ...prev];
+        });
+     } else if (manual) {
+       showToast("Geen code gevonden in deze e-mail.");
+     }
+  };
+
   // Fetch and Analyze Logic
   const handleFetchEmails = useCallback(async () => {
     if (!accessToken) return;
@@ -73,11 +124,8 @@ export default function App() {
     setIsProcessing(true);
     try {
       const recentEmails = await fetchRecentEmails(accessToken);
-      
-      // Update Inbox View (Always show latest)
       setEmails(recentEmails);
 
-      // Filter: only analyze emails we haven't processed yet
       const emailsToAnalyze = recentEmails.filter(email => !processedIds.has(email.id));
       
       if (emailsToAnalyze.length === 0) {
@@ -94,55 +142,11 @@ export default function App() {
 
       console.log(`Scanning ${emailsToAnalyze.length} new emails...`);
 
-      const analysisPromises = emailsToAnalyze.map(async (email) => {
-        // Pre-check
-        if (!needsAnalysis(email)) {
-           return null;
+      // Process strictly sequentially to avoid hitting rate limits and to update UI clearly
+      for (const email of emailsToAnalyze) {
+        if (needsAnalysis(email)) {
+          await processEmail(email);
         }
-        
-        setScanningStatus(`Analyseren: ${email.subject.substring(0, 20)}...`);
-        const result = await analyzeEmailContent(email.body || email.snippet);
-        
-        if (result && result.hasCode) {
-           return {
-             id: email.id,
-             serviceName: result.serviceName || email.sender.split('<')[0].replace(/"/g, '').trim(),
-             code: result.code,
-             timestamp: new Date(parseInt(email.internalDate)),
-             rawEmailPreview: email.snippet
-           } as ExtractedCode;
-        }
-        return null;
-      });
-
-      const results = await Promise.all(analysisPromises);
-      const foundCodes = results.filter((c): c is ExtractedCode => c !== null);
-      
-      if (foundCodes.length > 0) {
-        setCodes(prev => {
-          const newCodes = foundCodes.filter(nc => !prev.some(pc => pc.id === nc.id));
-          
-          if (newCodes.length > 0) {
-            showToast(`${newCodes.length} nieuwe code(s)!`);
-            
-            const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
-            audio.volume = 0.5;
-            audio.play().catch(() => {});
-
-            const newestCode = newCodes[0];
-            sendSystemNotification(
-              `${newestCode.serviceName}: ${newestCode.code}`,
-              `Tik hier om code te kopiëren`,
-              () => {
-                navigator.clipboard.writeText(newestCode.code)
-                  .then(() => showToast("Code gekopieerd!"))
-                  .catch(() => showToast("Code geselecteerd"));
-                window.focus();
-              }
-            );
-          }
-          return [...newCodes, ...prev];
-        });
       }
 
     } catch (error) {
@@ -153,11 +157,23 @@ export default function App() {
     }
   }, [accessToken, processedIds]);
 
+  // Handle Manual Click on Email
+  const handleManualScan = async (email: EmailMessage) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+    try {
+      await processEmail(email, true);
+    } finally {
+      setIsProcessing(false);
+      setScanningStatus(null);
+    }
+  };
+
   // Polling
   useEffect(() => {
     if (accessToken) {
       handleFetchEmails();
-      const interval = setInterval(handleFetchEmails, 15000);
+      const interval = setInterval(handleFetchEmails, 10000); // 10s poll
       return () => clearInterval(interval);
     }
   }, [accessToken, handleFetchEmails]);
@@ -240,6 +256,7 @@ export default function App() {
              emails={emails} 
              onConnect={signIn}
              onRefresh={handleFetchEmails}
+             onEmailClick={handleManualScan}
              isConnected={!!accessToken}
              isProcessing={isProcessing} 
            />
@@ -253,7 +270,7 @@ export default function App() {
           <div>
             <h2 className="text-2xl font-bold text-white mb-2">Jouw Codes</h2>
             <p className="text-slate-400 text-sm max-w-md">
-                Er wordt elke 15 seconden gezocht naar nieuwe codes.
+                Stuur een e-mail, de code verschijnt automatisch.
             </p>
           </div>
           <div className="flex flex-col items-end gap-1">
@@ -264,7 +281,7 @@ export default function App() {
               </div>
             )}
             {scanningStatus && (
-               <div className="text-[10px] text-slate-500 font-mono">
+               <div className="text-[10px] text-slate-500 font-mono bg-slate-900 px-2 py-1 rounded border border-slate-800">
                   {scanningStatus}
                </div>
             )}
@@ -279,7 +296,7 @@ export default function App() {
                   <ShieldCheckIcon className="w-8 h-8 text-slate-500" />
                 </div>
                 <p className="text-slate-400 font-medium">Nog geen codes</p>
-                <p className="text-slate-600 text-sm mt-1">Stuur jezelf een test e-mail met een code.</p>
+                <p className="text-slate-600 text-sm mt-1">Recente e-mails worden automatisch gescand.</p>
               </div>
             ) : (
               codes.map((code) => (

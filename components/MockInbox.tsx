@@ -6,11 +6,12 @@ interface InboxProps {
   emails: EmailMessage[];
   onRefresh: () => void;
   onConnect: () => void;
+  onEmailClick?: (email: EmailMessage) => void;
   isConnected: boolean;
   isProcessing: boolean;
 }
 
-export const Inbox: React.FC<InboxProps> = ({ emails, onRefresh, onConnect, isConnected, isProcessing }) => {
+export const Inbox: React.FC<InboxProps> = ({ emails, onRefresh, onConnect, onEmailClick, isConnected, isProcessing }) => {
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl h-full flex flex-col overflow-hidden">
       <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 backdrop-blur-sm sticky top-0 z-10">
@@ -24,7 +25,7 @@ export const Inbox: React.FC<InboxProps> = ({ emails, onRefresh, onConnect, isCo
             onClick={onConnect}
             className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
           >
-            Verbind Gmail
+            Verbind
           </button>
         ) : (
           <button
@@ -54,9 +55,14 @@ export const Inbox: React.FC<InboxProps> = ({ emails, onRefresh, onConnect, isCo
           </div>
         ) : (
           emails.map((email) => (
-            <div key={email.id} className="p-3 rounded-lg bg-slate-800/50 hover:bg-slate-800 border border-transparent hover:border-slate-700 transition-colors cursor-default group">
+            <div 
+              key={email.id} 
+              onClick={() => onEmailClick && onEmailClick(email)}
+              title="Klik om te scannen op codes"
+              className="p-3 rounded-lg bg-slate-800/50 hover:bg-slate-700 border border-transparent hover:border-cyan-500/30 transition-all cursor-pointer group"
+            >
               <div className="flex justify-between items-start mb-1">
-                <span className="font-semibold text-slate-200 text-sm truncate max-w-[120px]">{email.sender.split('<')[0]}</span>
+                <span className="font-semibold text-slate-200 text-sm truncate max-w-[120px]">{email.sender.split('<')[0].replace(/"/g, '')}</span>
                 <span className="text-xs text-slate-500">
                   {new Intl.DateTimeFormat('nl-NL', { hour: '2-digit', minute: '2-digit' }).format(new Date(parseInt(email.internalDate)))}
                 </span>

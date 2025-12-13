@@ -122,9 +122,10 @@ export const signIn = () => {
 
 export const fetchRecentEmails = async (token: string): Promise<EmailMessage[]> => {
   try {
-    // UPDATED QUERY: Look in Inbox OR Updates OR Promotions to find hidden codes
+    // RAW INBOX FETCH: Uses labelIds instead of 'q' query.
+    // This avoids search indexing latency. E.g. "Just arrived" emails show up immediately.
     const listResponse = await fetch(
-      'https://gmail.googleapis.com/gmail/v1/users/me/messages?q=label:inbox OR category:updates OR category:promotions&maxResults=20',
+      'https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=INBOX&maxResults=15',
       { headers: { Authorization: `Bearer ${token}` } }
     );
     
@@ -147,10 +148,8 @@ export const fetchRecentEmails = async (token: string): Promise<EmailMessage[]> 
         const subject = headers.find((h: any) => h.name === 'Subject')?.value || '(No Subject)';
         const sender = headers.find((h: any) => h.name === 'From')?.value || 'Unknown';
         
-        // Use the new robust extraction logic
         let body = extractBodyFromPayload(detail.payload);
         
-        // Final fallback to snippet if body extraction failed completely
         if (!body || body.trim().length === 0) {
           body = detail.snippet;
         }
