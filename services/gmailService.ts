@@ -16,6 +16,19 @@ const decodeBase64 = (data: string) => {
   }
 };
 
+// Helper to clean text (strip HTML tags and decode common entities)
+const cleanText = (text: string): string => {
+  return text
+    .replace(/<[^>]*>?/gm, ' ') // Remove HTML tags
+    .replace(/&nbsp;/g, ' ')    // Replace non-breaking space
+    .replace(/&amp;/g, '&')     // Replace &
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')       // Collapse multiple spaces
+    .trim();
+};
+
 // Recursive function to extract text from complex email structures
 const extractBodyFromPayload = (payload: any): string => {
   if (!payload) return "";
@@ -36,9 +49,8 @@ const extractBodyFromPayload = (payload: any): string => {
     // Priority 2: Look for HTML if no text
     const htmlPart = payload.parts.find((p: any) => p.mimeType === 'text/html');
     if (htmlPart) {
-      const htmlContent = extractBodyFromPayload(htmlPart);
-      // Strip HTML tags for cleaner analysis
-      return htmlContent.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim();
+      const rawHtml = extractBodyFromPayload(htmlPart);
+      return cleanText(rawHtml);
     }
 
     // Priority 3: Recursively check all parts (nested multiparts)
@@ -49,7 +61,7 @@ const extractBodyFromPayload = (payload: any): string => {
   if (payload.body && payload.body.data) {
     const content = decodeBase64(payload.body.data);
     if (payload.mimeType === 'text/html') {
-       return content.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim();
+       return cleanText(content);
     }
     return content;
   }
@@ -110,8 +122,9 @@ export const signIn = () => {
 
 export const fetchRecentEmails = async (token: string): Promise<EmailMessage[]> => {
   try {
+    // UPDATED QUERY: Look in Inbox OR Updates OR Promotions to find hidden codes
     const listResponse = await fetch(
-      'https://gmail.googleapis.com/gmail/v1/users/me/messages?q=label:inbox&maxResults=20',
+      'https://gmail.googleapis.com/gmail/v1/users/me/messages?q=label:inbox OR category:updates OR category:promotions&maxResults=20',
       { headers: { Authorization: `Bearer ${token}` } }
     );
     

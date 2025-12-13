@@ -11,6 +11,7 @@ export default function App() {
   const [emails, setEmails] = useState<EmailMessage[]>([]);
   const [codes, setCodes] = useState<ExtractedCode[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [scanningStatus, setScanningStatus] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   
   // Auth State
@@ -23,12 +24,10 @@ export default function App() {
 
   // Initialize Google Auth and Notification Permission
   useEffect(() => {
-    // 1. Request Notification Permission immediately
     requestNotificationPermission().then(granted => {
       if (granted) console.log("Notificaties toegestaan");
     });
 
-    // 2. Initialize Google Auth
     const timer = setTimeout(() => {
       const initialized = initGoogleAuth(
         (token) => {
@@ -50,19 +49,16 @@ export default function App() {
 
   // Logic to determine if an email is worth sending to AI
   const needsAnalysis = (email: EmailMessage): boolean => {
-    // Combine subject and the FULL body (not just snippet)
     const combinedText = (email.subject + " " + email.body).toLowerCase();
     
-    // Improved Regex:
-    // \b\d{3,8}\b -> simple numbers like 123456
-    // \b\d{3}[- ]\d{3}\b -> separated like 123-456 or 123 456
-    const hasPossibleCode = /\b\d{3,8}\b|\b\d{3}[- ]\d{3}\b/.test(combinedText);
+    // Improved Regex to catch more formats:
+    // Matches: 123456, 123-456, 123 456, A1B2C3, R5T21 (Alphanumeric 4-8 chars)
+    const hasPossibleCode = /\b[a-z0-9]{4,8}\b|\b\d{3}[- ]\d{3}\b/i.test(combinedText);
     
-    // Keywords often found in 2FA emails
     const keywords = [
       'code', 'verificatie', 'verification', 'login', 'aanmelden', 'sign in',
       'otp', '2fa', 'mfa', 'one-time', 'wachtwoord', 'password', 
-      'security', 'beveiliging', 'toegang', 'access', 'confirm', 'bevestig'
+      'security', 'beveiliging', 'toegang', 'access', 'confirm', 'bevestig', 'pin'
     ];
     
     const hasKeyword = keywords.some(k => combinedText.includes(k));
@@ -86,10 +82,10 @@ export default function App() {
       
       if (emailsToAnalyze.length === 0) {
         setIsProcessing(false);
+        setScanningStatus(null);
         return;
       }
 
-      // Mark these as processed immediately to prevent double submission
       setProcessedIds(prev => {
         const next = new Set(prev);
         emailsToAnalyze.forEach(e => next.add(e.id));
@@ -99,13 +95,12 @@ export default function App() {
       console.log(`Scanning ${emailsToAnalyze.length} new emails...`);
 
       const analysisPromises = emailsToAnalyze.map(async (email) => {
-        // Pre-check: Only use expensive AI if it looks like a code email
+        // Pre-check
         if (!needsAnalysis(email)) {
-           // console.log(`Skipped: ${email.subject}`);
            return null;
         }
         
-        console.log(`Analyzing candidate: ${email.subject}`);
+        setScanningStatus(`Analyseren: ${email.subject.substring(0, 20)}...`);
         const result = await analyzeEmailContent(email.body || email.snippet);
         
         if (result && result.hasCode) {
@@ -125,19 +120,15 @@ export default function App() {
       
       if (foundCodes.length > 0) {
         setCodes(prev => {
-          // Double check against existing codes in state
           const newCodes = foundCodes.filter(nc => !prev.some(pc => pc.id === nc.id));
           
           if (newCodes.length > 0) {
-            // 1. Toast in App
             showToast(`${newCodes.length} nieuwe code(s)!`);
             
-            // 2. Play Sound
             const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
             audio.volume = 0.5;
             audio.play().catch(() => {});
 
-            // 3. System Notification with Copy Action (Latest code)
             const newestCode = newCodes[0];
             sendSystemNotification(
               `${newestCode.serviceName}: ${newestCode.code}`,
@@ -158,14 +149,15 @@ export default function App() {
       console.error("Fout tijdens ophalen:", error);
     } finally {
       setIsProcessing(false);
+      setScanningStatus(null);
     }
   }, [accessToken, processedIds]);
 
-  // Polling: Automatically scan every 15 seconds
+  // Polling
   useEffect(() => {
     if (accessToken) {
-      handleFetchEmails(); // Initial fetch
-      const interval = setInterval(handleFetchEmails, 15000); // Poll every 15s
+      handleFetchEmails();
+      const interval = setInterval(handleFetchEmails, 15000);
       return () => clearInterval(interval);
     }
   }, [accessToken, handleFetchEmails]);
@@ -264,12 +256,19 @@ export default function App() {
                 Er wordt elke 15 seconden gezocht naar nieuwe codes.
             </p>
           </div>
-          {isProcessing && (
-             <div className="text-xs text-cyan-400 flex items-center gap-2 animate-pulse">
-               <RefreshCwIcon className="w-3 h-3 animate-spin" />
-               Analyseren...
-             </div>
-          )}
+          <div className="flex flex-col items-end gap-1">
+            {isProcessing && (
+              <div className="text-xs text-cyan-400 flex items-center gap-2 animate-pulse">
+                <RefreshCwIcon className="w-3 h-3 animate-spin" />
+                <span>Zoeken...</span>
+              </div>
+            )}
+            {scanningStatus && (
+               <div className="text-[10px] text-slate-500 font-mono">
+                  {scanningStatus}
+               </div>
+            )}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 md:p-10 pt-6">

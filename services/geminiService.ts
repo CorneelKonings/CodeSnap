@@ -27,13 +27,19 @@ export const analyzeEmailContent = async (emailBody: string) => {
     throw new Error("API Key missing");
   }
 
-  // Truncate email body to avoid massive payloads (first 2000 chars is usually enough for OTP)
-  const truncatedBody = emailBody.substring(0, 2000);
+  // Increased limit to 8000 to catch codes at the bottom of long threads/newsletters
+  const truncatedBody = emailBody.substring(0, 8000);
 
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: `Analyze the following email text. If it contains a login code, verification code, or OTP, extract it. 
+      contents: `Analyze the following email text carefully. Search for login codes, 2FA codes, OTPs, or verification numbers.
+      
+      Rules:
+      1. Look for 4-8 digit numbers (e.g., 123456, 123 456, 123-456).
+      2. Look for Alphanumeric codes often used by games or services (e.g., Steam Guard: R5T21, Sony: A1B2C3).
+      3. Ignore dates, phone numbers, or order numbers unless explicitly labeled as a verification code.
+      4. If multiple candidates exist, pick the one labeled "code" or "pin".
       
       Email Body:
       """
@@ -42,8 +48,8 @@ export const analyzeEmailContent = async (emailBody: string) => {
       config: {
         responseMimeType: "application/json",
         responseSchema: responseSchema,
-        systemInstruction: "You are a specialized security agent. Your job is to extract 2FA codes, OTPs, and verification numbers from emails accurately.",
-        temperature: 0.1, 
+        // Temperature 0 ensures consistency
+        temperature: 0, 
       },
     });
 
@@ -53,7 +59,6 @@ export const analyzeEmailContent = async (emailBody: string) => {
     return JSON.parse(jsonText);
   } catch (error) {
     console.error("Gemini analysis failed:", error);
-    // Don't throw, just return null so the app doesn't crash on one bad email
     return null; 
   }
 };
