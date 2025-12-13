@@ -6,6 +6,57 @@ const SCOPES = 'https://www.googleapis.com/auth/gmail.readonly';
 let tokenClient: any;
 let accessToken: string | null = null;
 
+// Helper to decode Gmail's URL-safe Base64
+const decodeBase64 = (data: string) => {
+  try {
+    return atob(data.replace(/-/g, '+').replace(/_/g, '/'));
+  } catch (e) {
+    console.error("Base64 decode error", e);
+    return "";
+  }
+};
+
+// Recursive function to extract text from complex email structures
+const extractBodyFromPayload = (payload: any): string => {
+  if (!payload) return "";
+
+  // 1. If strictly plain text part found
+  if (payload.mimeType === 'text/plain' && payload.body && payload.body.data) {
+    return decodeBase64(payload.body.data);
+  }
+
+  // 2. If it has parts (Multipart), search through them
+  if (payload.parts) {
+    // Priority 1: Look for plain text explicitly
+    const textPart = payload.parts.find((p: any) => p.mimeType === 'text/plain');
+    if (textPart) {
+      return extractBodyFromPayload(textPart);
+    }
+
+    // Priority 2: Look for HTML if no text
+    const htmlPart = payload.parts.find((p: any) => p.mimeType === 'text/html');
+    if (htmlPart) {
+      const htmlContent = extractBodyFromPayload(htmlPart);
+      // Strip HTML tags for cleaner analysis
+      return htmlContent.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim();
+    }
+
+    // Priority 3: Recursively check all parts (nested multiparts)
+    return payload.parts.map((p: any) => extractBodyFromPayload(p)).join('\n');
+  }
+
+  // 3. Fallback: Check body directly if no parts (often happens in simple HTML emails)
+  if (payload.body && payload.body.data) {
+    const content = decodeBase64(payload.body.data);
+    if (payload.mimeType === 'text/html') {
+       return content.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim();
+    }
+    return content;
+  }
+
+  return "";
+};
+
 export const initGoogleAuth = (
   onTokenReceived: (token: string) => void,
   onError?: (error: any) => void
@@ -50,31 +101,27 @@ export const initGoogleAuth = (
 
 export const signIn = () => {
   if (tokenClient) {
-    // Force prompt to ensure we don't get stuck in a loop of silent failures if origin is wrong
     tokenClient.requestAccessToken({ prompt: 'consent' });
   } else {
-    console.error("Token client not initialized. Check internet or Client ID.");
-    alert("Google authenticatie is niet geladen. Controleer je internetverbinding of herlaad de pagina.");
+    console.error("Token client not initialized.");
+    alert("Google authenticatie is niet geladen. Herlaad de pagina.");
   }
 };
 
 export const fetchRecentEmails = async (token: string): Promise<EmailMessage[]> => {
   try {
-    // 1. List messages (Inbox only, increased to 20 for better scanning)
     const listResponse = await fetch(
       'https://gmail.googleapis.com/gmail/v1/users/me/messages?q=label:inbox&maxResults=20',
       { headers: { Authorization: `Bearer ${token}` } }
     );
     
     if (!listResponse.ok) {
-        const errorData = await listResponse.json().catch(() => ({}));
-        throw new Error(`Failed to list messages: ${listResponse.status} ${JSON.stringify(errorData)}`);
+        throw new Error(`Failed to list messages: ${listResponse.status}`);
     }
     const listData = await listResponse.json();
     
     if (!listData.messages || listData.messages.length === 0) return [];
 
-    // 2. Fetch details for each message
     const emails: EmailMessage[] = await Promise.all(
       listData.messages.map(async (msg: any) => {
         const detailResponse = await fetch(
@@ -83,20 +130,16 @@ export const fetchRecentEmails = async (token: string): Promise<EmailMessage[]> 
         );
         const detail = await detailResponse.json();
         
-        // Extract headers
         const headers = detail.payload.headers;
         const subject = headers.find((h: any) => h.name === 'Subject')?.value || '(No Subject)';
         const sender = headers.find((h: any) => h.name === 'From')?.value || 'Unknown';
         
-        // decode body (simplified logic for text/plain)
-        let body = detail.snippet; // Fallback
-        if (detail.payload.parts) {
-          const textPart = detail.payload.parts.find((p: any) => p.mimeType === 'text/plain');
-          if (textPart && textPart.body.data) {
-             body = atob(textPart.body.data.replace(/-/g, '+').replace(/_/g, '/'));
-          }
-        } else if (detail.payload.body && detail.payload.body.data) {
-           body = atob(detail.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+        // Use the new robust extraction logic
+        let body = extractBodyFromPayload(detail.payload);
+        
+        // Final fallback to snippet if body extraction failed completely
+        if (!body || body.trim().length === 0) {
+          body = detail.snippet;
         }
 
         return {

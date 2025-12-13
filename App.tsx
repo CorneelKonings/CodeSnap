@@ -50,21 +50,24 @@ export default function App() {
 
   // Logic to determine if an email is worth sending to AI
   const needsAnalysis = (email: EmailMessage): boolean => {
-    const combinedText = (email.subject + " " + email.snippet).toLowerCase();
+    // Combine subject and the FULL body (not just snippet)
+    const combinedText = (email.subject + " " + email.body).toLowerCase();
     
-    // Regex for 4-8 digit codes (common OTP format)
-    const hasNumberSequence = /\b\d{4,8}\b/.test(combinedText);
+    // Improved Regex:
+    // \b\d{3,8}\b -> simple numbers like 123456
+    // \b\d{3}[- ]\d{3}\b -> separated like 123-456 or 123 456
+    const hasPossibleCode = /\b\d{3,8}\b|\b\d{3}[- ]\d{3}\b/.test(combinedText);
     
     // Keywords often found in 2FA emails
     const keywords = [
-      'code', 'verificatie', 'verification', 'login', 'aanmelden', 
+      'code', 'verificatie', 'verification', 'login', 'aanmelden', 'sign in',
       'otp', '2fa', 'mfa', 'one-time', 'wachtwoord', 'password', 
-      'security', 'beveiliging', 'toegang', 'access'
+      'security', 'beveiliging', 'toegang', 'access', 'confirm', 'bevestig'
     ];
     
     const hasKeyword = keywords.some(k => combinedText.includes(k));
 
-    return hasNumberSequence || hasKeyword;
+    return hasPossibleCode || hasKeyword;
   };
 
   // Fetch and Analyze Logic
@@ -93,12 +96,16 @@ export default function App() {
         return next;
       });
 
+      console.log(`Scanning ${emailsToAnalyze.length} new emails...`);
+
       const analysisPromises = emailsToAnalyze.map(async (email) => {
         // Pre-check: Only use expensive AI if it looks like a code email
         if (!needsAnalysis(email)) {
+           // console.log(`Skipped: ${email.subject}`);
            return null;
         }
-
+        
+        console.log(`Analyzing candidate: ${email.subject}`);
         const result = await analyzeEmailContent(email.body || email.snippet);
         
         if (result && result.hasCode) {
