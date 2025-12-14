@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ExtractedCode, EmailMessage } from './types';
 import { analyzeEmailContent } from './services/geminiService';
-import { initGoogleAuth, signIn, fetchRecentEmails } from './services/gmailService';
+import { initGoogleAuth, signIn, signOut, fetchRecentEmails } from './services/gmailService';
 import { requestNotificationPermission, sendSystemNotification } from './services/notificationService';
 import { CodeCard } from './components/CodeCard';
 import { Inbox } from './components/MockInbox';
@@ -17,7 +17,7 @@ export default function App() {
   // Auth State
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [hasClientId, setHasClientId] = useState(true);
-  const [authError, setAuthError] = useState<any | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Tracking processed emails to prevent duplicates and loops
   const [processedIds, setProcessedIds] = useState<Set<string>>(new Set());
@@ -37,8 +37,7 @@ export default function App() {
         },
         (error) => {
           console.error("Auth failed:", error);
-          setAuthError(error);
-          showToast("Inloggen mislukt");
+          setAuthError("Inloggen mislukt. Controleer console.");
         }
       );
       setHasClientId(initialized);
@@ -47,10 +46,18 @@ export default function App() {
     return () => clearTimeout(timer);
   }, []);
 
+  const handleLogout = () => {
+    signOut();
+    setAccessToken(null);
+    setEmails([]);
+    setCodes([]);
+    setAuthError(null);
+    showToast("Uitgelogd");
+  };
+
   // Logic to determine if an email is worth sending to AI
   const needsAnalysis = (email: EmailMessage): boolean => {
     // FORCE SCAN: If email is younger than 5 minutes, ALWAYS scan it.
-    // This solves issues with test emails not having specific keywords.
     const emailDate = new Date(parseInt(email.internalDate));
     const now = new Date();
     const ageInMinutes = (now.getTime() - emailDate.getTime()) / 60000;
@@ -122,6 +129,8 @@ export default function App() {
     if (!accessToken) return;
     
     setIsProcessing(true);
+    setAuthError(null); // Reset error before trying
+
     try {
       const recentEmails = await fetchRecentEmails(accessToken);
       setEmails(recentEmails);
@@ -149,8 +158,23 @@ export default function App() {
         }
       }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Fout tijdens ophalen:", error);
+      const msg = error.message || String(error);
+      
+      // Determine user-friendly error message
+      if (msg.includes("403")) {
+         if (msg.includes("API has not been used") || msg.includes("disabled")) {
+             setAuthError("De Gmail API staat UIT in Google Cloud. Zet deze aan.");
+         } else {
+             setAuthError("Geen toegang. Log opnieuw in en vink alles aan.");
+         }
+      } else if (msg.includes("401")) {
+         setAuthError("Sessie verlopen. Log opnieuw in.");
+         setAccessToken(null);
+      } else {
+         setAuthError(`Fout: ${msg}`);
+      }
     } finally {
       setIsProcessing(false);
       setScanningStatus(null);
@@ -173,7 +197,7 @@ export default function App() {
   useEffect(() => {
     if (accessToken) {
       handleFetchEmails();
-      const interval = setInterval(handleFetchEmails, 10000); // 10s poll
+      const interval = setInterval(handleFetchEmails, 15000); 
       return () => clearInterval(interval);
     }
   }, [accessToken, handleFetchEmails]);
@@ -200,54 +224,53 @@ export default function App() {
                     CodeSnap
                 </h1>
                 <div className="flex items-center gap-2 ml-10">
-                   <p className="text-xs text-slate-500">Auto-Scan Actief</p>
-                   {accessToken && (
-                     <span className="relative flex h-2 w-2">
-                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                       <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                     </span>
+                   {accessToken ? (
+                     <button onClick={handleLogout} className="text-xs text-red-400 hover:text-red-300 underline">
+                       Uitloggen
+                     </button>
+                   ) : (
+                     <p className="text-xs text-slate-500">Auto-Scan Inactief</p>
                    )}
                 </div>
             </div>
           </div>
         </div>
         
-        {/* Auth Configuration Helper */}
-        {(!hasClientId || authError) && (
-           <div className="mx-6 mb-4 p-4 bg-red-900/20 border border-red-800/50 rounded-lg">
+        {/* Auth Error Display */}
+        {authError && (
+           <div className="mx-6 mb-4 p-4 bg-red-900/20 border border-red-500/50 rounded-lg animate-pulse">
              <div className="flex flex-col gap-2">
-               <div className="flex items-center gap-2 text-red-200 font-medium text-sm">
-                 <span>⚠️</span> Inlogprobleem gedetecteerd
+               <div className="flex items-center gap-2 text-red-200 font-bold text-sm">
+                 <span>⚠️</span> Actie vereist
                </div>
+               <p className="text-xs text-red-100">{authError}</p>
                
-               {authError ? (
-                  <div className="text-xs text-red-300">
-                    Foutmelding: {JSON.stringify(authError.type || authError.message || authError)}
-                    <br/><br/>
-                    Controleer of de <strong>Origin</strong> hieronder exact overeenkomt in Google Cloud.
-                  </div>
-               ) : (
-                  <p className="text-red-300/80 text-xs">
-                    Je <code>GOOGLE_CLIENT_ID</code> ontbreekt of is onjuist.
-                  </p>
+               {authError.includes("API") && (
+                 <a 
+                   href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" 
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   className="text-xs bg-red-800 text-white py-1 px-2 rounded text-center hover:bg-red-700"
+                 >
+                   Zet Gmail API Aan &rarr;
+                 </a>
                )}
-
-               <div className="mt-2 bg-slate-950 p-2 rounded border border-slate-800">
-                 <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Huidige Origin (Kopieer dit):</div>
-                 <code className="text-xs text-cyan-400 break-all select-all font-mono block">
-                   {currentOrigin}
-                 </code>
-               </div>
-
-               <a 
-                 href="https://console.cloud.google.com/apis/credentials" 
-                 target="_blank"
-                 rel="noopener noreferrer"
-                 className="text-xs font-bold text-white hover:text-cyan-300 hover:underline mt-1"
-               >
-                 Open Google Cloud Console &rarr;
-               </a>
+               {(authError.includes("toegang") || authError.includes("Sessie")) && (
+                  <button 
+                   onClick={() => { handleLogout(); signIn(); }}
+                   className="text-xs bg-red-800 text-white py-1 px-2 rounded text-center hover:bg-red-700"
+                  >
+                   Opnieuw verbinden
+                  </button>
+               )}
              </div>
+           </div>
+        )}
+
+        {/* Client ID Warning */}
+        {!hasClientId && !authError && (
+           <div className="mx-6 mb-4 p-4 bg-yellow-900/20 border border-yellow-800/50 rounded-lg">
+               <p className="text-yellow-200 text-xs">Geen Client ID gevonden.</p>
            </div>
         )}
 

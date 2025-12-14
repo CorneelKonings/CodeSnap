@@ -113,6 +113,7 @@ export const initGoogleAuth = (
 
 export const signIn = () => {
   if (tokenClient) {
+    // Prompt consent ensures we ask for permissions again if they were missed
     tokenClient.requestAccessToken({ prompt: 'consent' });
   } else {
     console.error("Token client not initialized.");
@@ -120,17 +121,27 @@ export const signIn = () => {
   }
 };
 
+export const signOut = () => {
+  if (accessToken && (window as any).google) {
+    (window as any).google.accounts.oauth2.revoke(accessToken, () => {console.log('Token revoked')});
+  }
+  accessToken = null;
+};
+
 export const fetchRecentEmails = async (token: string): Promise<EmailMessage[]> => {
   try {
-    // RAW INBOX FETCH: Uses labelIds instead of 'q' query.
-    // This avoids search indexing latency. E.g. "Just arrived" emails show up immediately.
     const listResponse = await fetch(
       'https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=INBOX&maxResults=15',
       { headers: { Authorization: `Bearer ${token}` } }
     );
     
     if (!listResponse.ok) {
-        throw new Error(`Failed to list messages: ${listResponse.status}`);
+        const errorData = await listResponse.json().catch(() => ({}));
+        console.error("Gmail API Error Details:", errorData);
+        
+        // Extract a readable error message
+        const message = errorData.error?.message || `Gmail API returned ${listResponse.status}`;
+        throw new Error(message);
     }
     const listData = await listResponse.json();
     
@@ -142,6 +153,9 @@ export const fetchRecentEmails = async (token: string): Promise<EmailMessage[]> 
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
+        
+        if (!detailResponse.ok) return null; // Skip if individual fetch fails
+        
         const detail = await detailResponse.json();
         
         const headers = detail.payload.headers;
@@ -166,7 +180,7 @@ export const fetchRecentEmails = async (token: string): Promise<EmailMessage[]> 
       })
     );
 
-    return emails;
+    return emails.filter((e): e is EmailMessage => e !== null);
   } catch (error) {
     console.error("Error fetching emails:", error);
     throw error;
