@@ -86,6 +86,20 @@ export default function App() {
 
   // Handler for Manual Permission Request
   const handleEnableNotifications = async () => {
+    // Direct check on the browser object, ignoring React state for a moment
+    if (Notification.permission === 'denied') {
+      alert(
+        "🚫 TOEGANG GEWEIGERD\n\n" +
+        "Je browser blokkeert meldingen voor deze site.\n\n" +
+        "OPLOSSING:\n" +
+        "1. Klik op het slotje 🔒 (of instellingen icoon) linksboven in de adresbalk.\n" +
+        "2. Zoek 'Meldingen' of 'Permissies'.\n" +
+        "3. Zet de schakelaar op 'Toestaan' (Allow) of klik op 'Reset'.\n" +
+        "4. Ververs deze pagina."
+      );
+      return;
+    }
+
     const granted = await requestNotificationPermission();
     setPermissionState(granted ? 'granted' : 'denied');
     
@@ -99,7 +113,16 @@ export default function App() {
   };
   
   const handleTestNotification = async () => {
-    if (permissionState !== 'granted') {
+    // Refresh permission state before testing
+    const currentPermission = Notification.permission;
+    setPermissionState(currentPermission);
+
+    if (currentPermission === 'denied') {
+       alert("🚫 Browser blokkeert meldingen.\n\nKlik op het slotje 🔒 in de adresbalk en zet Meldingen op 'Toestaan'.");
+       return;
+    }
+
+    if (currentPermission !== 'granted') {
       const granted = await requestNotificationPermission();
       setPermissionState(granted ? 'granted' : 'denied');
       if (!granted) {
@@ -117,16 +140,19 @@ export default function App() {
     if (result.success) {
       showToast("Test verstuurd naar apparaat");
     } else {
-      showToast("Test mislukt (zie popup)");
+      showToast("Test mislukt");
       
-      let tips = "Tips:\n1. Check of 'Niet storen' uit staat.\n2. Controleer browser instellingen.";
-      
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-      if (isIOS) {
-          tips = "⚠️ iOS/iPad LET OP:\nNotificaties werken ALLEEN als je deze site toevoegt aan je beginscherm.\n\nKlik op Delen (vierkant met pijl) -> 'Zet op beginscherm'.";
+      let errorMsg = result.error || "Onbekende fout";
+      let helpText = "Controleer je browser instellingen.";
+
+      // Specific advice based on error content
+      if (errorMsg.includes("denied")) {
+          helpText = "⚠️ JE BROWSER BLOKKEERT DIT.\nKlik op het slotje 🔒 in de adresbalk -> Zet Meldingen op 'Toestaan'.";
+      } else if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+          helpText = "⚠️ iOS vereist installatie:\n1. Klik Delen (vierkant met pijl)\n2. Kies 'Zet op beginscherm'\n3. Open de app via het icoon.";
       }
       
-      alert(`FOUT BIJ MELDING:\n\n${result.error}\n\n${tips}`);
+      alert(`FOUT: ${errorMsg}\n\n${helpText}`);
     }
   };
 
