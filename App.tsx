@@ -117,17 +117,15 @@ export default function App() {
     const currentPermission = Notification.permission;
     setPermissionState(currentPermission);
 
-    if (currentPermission === 'denied') {
-       alert("🚫 Browser blokkeert meldingen.\n\nKlik op het slotje 🔒 in de adresbalk en zet Meldingen op 'Toestaan'.");
-       return;
-    }
+    // Removed the strict 'denied' blocking here to match the service change.
+    // We try to request/send anyway.
 
     if (currentPermission !== 'granted') {
       const granted = await requestNotificationPermission();
       setPermissionState(granted ? 'granted' : 'denied');
       if (!granted) {
         showToast("Meldingen zijn geweigerd.");
-        return;
+        // We continue to try sending below even if it says denied, just in case state is stale.
       }
     }
 
@@ -143,11 +141,11 @@ export default function App() {
       showToast("Test mislukt");
       
       let errorMsg = result.error || "Onbekende fout";
-      let helpText = "Controleer je browser instellingen.";
+      let helpText = "Probeer de pagina te verversen (F5).";
 
       // Specific advice based on error content
-      if (errorMsg.includes("denied")) {
-          helpText = "⚠️ JE BROWSER BLOKKEERT DIT.\nKlik op het slotje 🔒 in de adresbalk -> Zet Meldingen op 'Toestaan'.";
+      if (errorMsg.toLowerCase().includes("denied") || errorMsg.toLowerCase().includes("permission")) {
+          helpText = "⚠️ BROWSER FOUT:\nDe browser denkt dat meldingen uit staan.\n\n1. Check slotje 🔒 in adresbalk.\n2. Ververs de pagina (Cruciaal!).";
       } else if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
           helpText = "⚠️ iOS vereist installatie:\n1. Klik Delen (vierkant met pijl)\n2. Kies 'Zet op beginscherm'\n3. Open de app via het icoon.";
       }

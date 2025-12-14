@@ -4,15 +4,12 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
     return false;
   }
 
-  if (Notification.permission === "granted") {
-    return true;
-  }
-
-  if (Notification.permission !== "denied") {
+  // Always request if not granted, to be safe
+  if (Notification.permission !== "granted") {
     const permission = await Notification.requestPermission();
     return permission === "granted";
   }
-  return false;
+  return true;
 };
 
 export interface NotificationResult {
@@ -25,8 +22,16 @@ export const sendSystemNotification = async (title: string, body: string, onClic
     return { success: false, error: "Browser ondersteunt geen notificaties." };
   }
 
-  if (Notification.permission !== "granted") {
-    return { success: false, error: `Permissie is '${Notification.permission}' (niet 'granted')` };
+  // REMOVED: The strict check blocking 'denied' status. 
+  // We now try to send regardless. If it's truly denied, the browser will throw an error in the try/catch blocks below.
+  // This fixes the issue where the app thinks it's denied (stale state) but the user actually granted it.
+  
+  if (Notification.permission === "default") {
+      try {
+        await Notification.requestPermission();
+      } catch (e) {
+        console.warn("Auto-request permission failed", e);
+      }
   }
 
   const options: any = {
@@ -41,17 +46,20 @@ export const sendSystemNotification = async (title: string, body: string, onClic
   };
 
   let errorLog = "";
+  let swSuccess = false;
 
-  // 1. Try Service Worker (Preferred for Mobile)
+  // 1. Try Service Worker (Preferred for Mobile/PWA)
+  // Even if window.Notification.permission says denied, SW might have independent access on some Android versions.
   try {
     if ('serviceWorker' in navigator) {
       const registration = await navigator.serviceWorker.getRegistration();
       if (registration) {
-        // Check if active
         if (!registration.active) {
             errorLog += "[SW found but not active] ";
         } else {
+            // Trying to show notification via SW
             await registration.showNotification(title, options);
+            swSuccess = true;
             return { success: true };
         }
       } else {
@@ -65,21 +73,23 @@ export const sendSystemNotification = async (title: string, body: string, onClic
   }
 
   // 2. Fallback to Standard Web API
-  try {
-    const notification = new Notification(title, options);
-    
-    if (onClick) {
-      notification.onclick = (e) => {
-        e.preventDefault();
-        window.focus();
-        if (window.opener) window.opener.focus();
-        onClick();
-        notification.close();
-      };
-    }
-    return { success: true };
-  } catch (e: any) {
-    errorLog += `[Standard Error: ${e.message || e}]`;
+  if (!swSuccess) {
+      try {
+        const notification = new Notification(title, options);
+        
+        if (onClick) {
+          notification.onclick = (e) => {
+            e.preventDefault();
+            window.focus();
+            if (window.opener) window.opener.focus();
+            onClick();
+            notification.close();
+          };
+        }
+        return { success: true };
+      } catch (e: any) {
+        errorLog += `[Standard Error: ${e.message || e}]`;
+      }
   }
 
   // If we reach here, both failed
