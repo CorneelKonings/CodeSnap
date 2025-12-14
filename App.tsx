@@ -96,17 +96,17 @@ export default function App() {
       }
     }
 
-    const success = await sendSystemNotification(
+    const result = await sendSystemNotification(
       "Test Melding 🚀",
       "Als je dit ziet, werkt het op je apparaat!",
       () => window.focus()
     );
 
-    if (success) {
+    if (result.success) {
       showToast("Test verstuurd naar apparaat");
     } else {
-      showToast("Kon geen melding sturen. Check instellingen.");
-      alert("Het systeem blokkeert de melding. Controleer je 'Niet storen' of browserinstellingen.");
+      showToast("Test mislukt (zie popup)");
+      alert(`FOUT BIJ MELDING:\n\n${result.error}\n\nTips:\n1. Check of 'Niet storen' uit staat.\n2. Op Android: Gebruik Chrome 'Toevoegen aan startscherm'.`);
     }
   };
 

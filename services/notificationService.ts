@@ -15,32 +15,57 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
   return false;
 };
 
-export const sendSystemNotification = async (title: string, body: string, onClick?: () => void) => {
+export interface NotificationResult {
+  success: boolean;
+  error?: string;
+}
+
+export const sendSystemNotification = async (title: string, body: string, onClick?: () => void): Promise<NotificationResult> => {
+  if (!("Notification" in window)) {
+    return { success: false, error: "Browser ondersteunt geen notificaties." };
+  }
+
   if (Notification.permission !== "granted") {
-    console.warn("Notification permission not granted");
-    return false;
+    return { success: false, error: `Permissie is '${Notification.permission}' (niet 'granted')` };
   }
 
   const options: any = {
     body,
     icon: 'https://vitejs.dev/logo.svg',
-    badge: 'https://vitejs.dev/logo.svg', // Android small icon
+    badge: 'https://vitejs.dev/logo.svg',
     vibrate: [200, 100, 200],
     tag: 'codesnap-otp',
     renotify: true,
     requireInteraction: true,
-    data: { url: window.location.href } // Data for SW to use
+    data: { url: window.location.href }
   };
 
+  let errorLog = "";
+
+  // 1. Try Service Worker (Preferred for Mobile)
   try {
-    // 1. Try Service Worker (Best for Mobile/PWA)
-    const registration = await navigator.serviceWorker.getRegistration();
-    if (registration) {
-      await registration.showNotification(title, options);
-      return true;
-    } 
-    
-    // 2. Fallback to Standard Web API (Desktop)
+    if ('serviceWorker' in navigator) {
+      const registration = await navigator.serviceWorker.getRegistration();
+      if (registration) {
+        // Check if active
+        if (!registration.active) {
+            errorLog += "[SW found but not active] ";
+        } else {
+            await registration.showNotification(title, options);
+            return { success: true };
+        }
+      } else {
+        errorLog += "[No SW registration found] ";
+      }
+    } else {
+        errorLog += "[No SW support] ";
+    }
+  } catch (e: any) {
+    errorLog += `[SW Error: ${e.message || e}] `;
+  }
+
+  // 2. Fallback to Standard Web API
+  try {
     const notification = new Notification(title, options);
     
     if (onClick) {
@@ -52,12 +77,12 @@ export const sendSystemNotification = async (title: string, body: string, onClic
         notification.close();
       };
     }
-    return true;
-
-  } catch (error) {
-    console.error("Notification failed:", error);
-    // Fallback alert if everything fails, so user knows it tried
-    // alert(`NIEUWE CODE: ${title}\n${body}`); 
-    return false;
+    return { success: true };
+  } catch (e: any) {
+    errorLog += `[Standard Error: ${e.message || e}]`;
   }
+
+  // If we reach here, both failed
+  console.error("Notification failures:", errorLog);
+  return { success: false, error: errorLog.trim() };
 };
