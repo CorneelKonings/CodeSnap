@@ -27,17 +27,29 @@ export default function App() {
     "Notification" in window ? Notification.permission : 'default'
   );
 
+  // iOS / PWA Detection
+  const [showIOSInstallPrompt, setShowIOSInstallPrompt] = useState(false);
+
   // Tracking processed emails to prevent duplicates and loops
   const [processedIds, setProcessedIds] = useState<Set<string>>(new Set());
 
-  // Initialize Google Auth & LocalStorage
+  // Initialize Google Auth & LocalStorage & Check PWA Status
   useEffect(() => {
     // 1. Check Permission State on load
     if ("Notification" in window) {
       setPermissionState(Notification.permission);
     }
 
-    // 2. Check for existing session in localStorage
+    // 2. Check iOS PWA Status
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone;
+    
+    // If on iOS and NOT installed as app -> Notificaties often fail or work poorly
+    if (isIOS && !isStandalone) {
+        setShowIOSInstallPrompt(true);
+    }
+
+    // 3. Check for existing session in localStorage
     const storedToken = localStorage.getItem('google_access_token');
     const storedTime = localStorage.getItem('google_token_time');
     
@@ -51,7 +63,7 @@ export default function App() {
       }
     }
 
-    // 3. Initialize Google Auth Client
+    // 4. Initialize Google Auth Client
     const timer = setTimeout(() => {
       const initialized = initGoogleAuth(
         (token) => {
@@ -106,7 +118,15 @@ export default function App() {
       showToast("Test verstuurd naar apparaat");
     } else {
       showToast("Test mislukt (zie popup)");
-      alert(`FOUT BIJ MELDING:\n\n${result.error}\n\nTips:\n1. Check of 'Niet storen' uit staat.\n2. Op Android: Gebruik Chrome 'Toevoegen aan startscherm'.`);
+      
+      let tips = "Tips:\n1. Check of 'Niet storen' uit staat.\n2. Controleer browser instellingen.";
+      
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      if (isIOS) {
+          tips = "⚠️ iOS/iPad LET OP:\nNotificaties werken ALLEEN als je deze site toevoegt aan je beginscherm.\n\nKlik op Delen (vierkant met pijl) -> 'Zet op beginscherm'.";
+      }
+      
+      alert(`FOUT BIJ MELDING:\n\n${result.error}\n\n${tips}`);
     }
   };
 
@@ -315,6 +335,27 @@ export default function App() {
                 </div>
             </div>
           </div>
+
+          {/* iOS Install Prompt */}
+          {showIOSInstallPrompt && (
+            <div className="mb-4 bg-yellow-900/30 border border-yellow-600/50 p-3 rounded-lg animate-fade-in">
+              <p className="text-xs text-yellow-200 font-bold mb-1">⚠️ Installatie vereist voor notificaties</p>
+              <p className="text-[11px] text-yellow-100 mb-2">
+                Apple blokkeert meldingen in Safari.
+              </p>
+              <ol className="text-[11px] text-yellow-100 list-decimal pl-4 space-y-1">
+                <li>Tik op de <strong>Deel-knop</strong> (vierkant met pijl)</li>
+                <li>Kies <strong>Zet op beginscherm</strong></li>
+                <li>Open de app via het nieuwe icoon</li>
+              </ol>
+              <button 
+                 onClick={() => setShowIOSInstallPrompt(false)}
+                 className="mt-2 w-full py-1 text-[10px] bg-yellow-800/50 hover:bg-yellow-800 rounded text-yellow-200"
+              >
+                Sluit melding
+              </button>
+            </div>
+          )}
 
           {/* NOTIFICATION CONTROL AREA */}
           <div className="mb-4 bg-slate-900/50 p-3 rounded-lg border border-slate-800">
