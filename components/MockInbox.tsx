@@ -1,9 +1,10 @@
 import React from 'react';
 import { EmailMessage } from '../types';
-import { MailIcon, RefreshCwIcon } from './Icon';
+import { MailIcon, RefreshCwIcon, ShieldCheckIcon } from './Icon';
 
 interface InboxProps {
   emails: EmailMessage[];
+  scanResults?: Record<string, 'analyzing' | 'found' | 'none' | 'skipped'>;
   onRefresh: () => void;
   onConnect: () => void;
   onEmailClick?: (email: EmailMessage) => void;
@@ -11,7 +12,7 @@ interface InboxProps {
   isProcessing: boolean;
 }
 
-export const Inbox: React.FC<InboxProps> = ({ emails, onRefresh, onConnect, onEmailClick, isConnected, isProcessing }) => {
+export const Inbox: React.FC<InboxProps> = ({ emails, scanResults = {}, onRefresh, onConnect, onEmailClick, isConnected, isProcessing }) => {
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl h-full flex flex-col overflow-hidden">
       <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 backdrop-blur-sm sticky top-0 z-10">
@@ -54,23 +55,40 @@ export const Inbox: React.FC<InboxProps> = ({ emails, onRefresh, onConnect, onEm
             <p className="text-xs opacity-60">Druk op refresh om te scannen.</p>
           </div>
         ) : (
-          emails.map((email) => (
-            <div 
-              key={email.id} 
-              onClick={() => onEmailClick && onEmailClick(email)}
-              title="Klik om te scannen op codes"
-              className="p-3 rounded-lg bg-slate-800/50 hover:bg-slate-700 border border-transparent hover:border-cyan-500/30 transition-all cursor-pointer group"
-            >
-              <div className="flex justify-between items-start mb-1">
-                <span className="font-semibold text-slate-200 text-sm truncate max-w-[120px]">{email.sender.split('<')[0].replace(/"/g, '')}</span>
-                <span className="text-xs text-slate-500">
-                  {new Intl.DateTimeFormat('nl-NL', { hour: '2-digit', minute: '2-digit' }).format(new Date(parseInt(email.internalDate)))}
-                </span>
+          emails.map((email) => {
+            const status = scanResults[email.id];
+            let borderClass = "border-transparent";
+            let opacityClass = "opacity-100";
+
+            if (status === 'found') borderClass = "border-cyan-500/50 bg-cyan-900/10";
+            if (status === 'none') { borderClass = "border-slate-700/50"; opacityClass = "opacity-75"; }
+            if (status === 'analyzing') borderClass = "border-yellow-500/50 animate-pulse";
+            
+            return (
+              <div 
+                key={email.id} 
+                onClick={() => onEmailClick && onEmailClick(email)}
+                title={status === 'found' ? "Code gevonden!" : "Klik om opnieuw te scannen"}
+                className={`p-3 rounded-lg bg-slate-800/50 hover:bg-slate-700 border-l-4 ${borderClass} ${opacityClass} transition-all cursor-pointer group relative overflow-hidden`}
+              >
+                {/* Visual Status Indicator Dot */}
+                {status === 'found' && (
+                  <div className="absolute right-2 top-2">
+                    <ShieldCheckIcon className="w-3 h-3 text-cyan-400" />
+                  </div>
+                )}
+                
+                <div className="flex justify-between items-start mb-1">
+                  <span className="font-semibold text-slate-200 text-sm truncate max-w-[120px]">{email.sender.split('<')[0].replace(/"/g, '')}</span>
+                  <span className="text-xs text-slate-500">
+                    {new Intl.DateTimeFormat('nl-NL', { hour: '2-digit', minute: '2-digit' }).format(new Date(parseInt(email.internalDate)))}
+                  </span>
+                </div>
+                <div className="text-sm font-medium text-slate-300 mb-1 truncate">{email.subject}</div>
+                <div className="text-xs text-slate-500 line-clamp-2 group-hover:text-slate-400 transition-colors">{email.snippet}</div>
               </div>
-              <div className="text-sm font-medium text-slate-300 mb-1 truncate">{email.subject}</div>
-              <div className="text-xs text-slate-500 line-clamp-2 group-hover:text-slate-400 transition-colors">{email.snippet}</div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

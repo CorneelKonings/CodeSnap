@@ -14,6 +14,9 @@ export default function App() {
   const [scanningStatus, setScanningStatus] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   
+  // Track status of each email: 'pending', 'analyzing', 'found', 'none', 'skipped'
+  const [scanResults, setScanResults] = useState<Record<string, 'analyzing' | 'found' | 'none' | 'skipped'>>({});
+  
   // Auth State
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [hasClientId, setHasClientId] = useState(true);
@@ -52,17 +55,19 @@ export default function App() {
     setEmails([]);
     setCodes([]);
     setAuthError(null);
+    setScanResults({});
+    setProcessedIds(new Set());
     showToast("Uitgelogd");
   };
 
   // Logic to determine if an email is worth sending to AI
   const needsAnalysis = (email: EmailMessage): boolean => {
-    // FORCE SCAN: If email is younger than 5 minutes, ALWAYS scan it.
+    // FORCE SCAN: If email is younger than 10 minutes (increased from 5), ALWAYS scan it.
     const emailDate = new Date(parseInt(email.internalDate));
     const now = new Date();
     const ageInMinutes = (now.getTime() - emailDate.getTime()) / 60000;
     
-    if (ageInMinutes < 5) {
+    if (ageInMinutes < 10) {
       console.log(`Force scanning recent email (${ageInMinutes.toFixed(1)}m old): ${email.subject}`);
       return true;
     }
@@ -85,10 +90,12 @@ export default function App() {
 
   const processEmail = async (email: EmailMessage, manual = false) => {
      setScanningStatus(`Analyseren: ${email.subject.substring(0, 25)}...`);
-     
+     setScanResults(prev => ({...prev, [email.id]: 'analyzing'}));
+
      const result = await analyzeEmailContent(email.body || email.snippet);
      
      if (result && result.hasCode) {
+        setScanResults(prev => ({...prev, [email.id]: 'found'}));
         const newCode: ExtractedCode = {
           id: email.id,
           serviceName: result.serviceName || email.sender.split('<')[0].replace(/"/g, '').trim(),
@@ -119,8 +126,11 @@ export default function App() {
            
            return [newCode, ...prev];
         });
-     } else if (manual) {
-       showToast("Geen code gevonden in deze e-mail.");
+     } else {
+       setScanResults(prev => ({...prev, [email.id]: 'none'}));
+       if (manual) {
+         showToast("Geen code gevonden in deze e-mail.");
+       }
      }
   };
 
@@ -155,6 +165,8 @@ export default function App() {
       for (const email of emailsToAnalyze) {
         if (needsAnalysis(email)) {
           await processEmail(email);
+        } else {
+          setScanResults(prev => ({...prev, [email.id]: 'skipped'}));
         }
       }
 
@@ -197,7 +209,7 @@ export default function App() {
   useEffect(() => {
     if (accessToken) {
       handleFetchEmails();
-      const interval = setInterval(handleFetchEmails, 15000); 
+      const interval = setInterval(handleFetchEmails, 5000); // Poll every 5 seconds
       return () => clearInterval(interval);
     }
   }, [accessToken, handleFetchEmails]);
@@ -277,6 +289,7 @@ export default function App() {
         <div className="flex-1 px-4 pb-4 overflow-hidden">
            <Inbox 
              emails={emails} 
+             scanResults={scanResults}
              onConnect={signIn}
              onRefresh={handleFetchEmails}
              onEmailClick={handleManualScan}

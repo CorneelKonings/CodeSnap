@@ -130,9 +130,13 @@ export const signOut = () => {
 
 export const fetchRecentEmails = async (token: string): Promise<EmailMessage[]> => {
   try {
+    // IMPORTANT: added cache: 'no-store' to ensure we always get fresh data
     const listResponse = await fetch(
       'https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=INBOX&maxResults=15',
-      { headers: { Authorization: `Bearer ${token}` } }
+      { 
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store' 
+      }
     );
     
     if (!listResponse.ok) {
@@ -151,7 +155,10 @@ export const fetchRecentEmails = async (token: string): Promise<EmailMessage[]> 
       listData.messages.map(async (msg: any) => {
         const detailResponse = await fetch(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`,
-          { headers: { Authorization: `Bearer ${token}` } }
+          { 
+            headers: { Authorization: `Bearer ${token}` },
+            cache: 'no-store'
+          }
         );
         
         if (!detailResponse.ok) return null; // Skip if individual fetch fails
