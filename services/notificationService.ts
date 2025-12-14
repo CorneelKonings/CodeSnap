@@ -1,13 +1,16 @@
 export const requestNotificationPermission = async (): Promise<boolean> => {
-  if (!("Notification" in window)) {
-    console.log("This browser does not support desktop notification");
-    return false;
-  }
-
-  // Always request if not granted, to be safe
-  if (Notification.permission !== "granted") {
-    const permission = await Notification.requestPermission();
-    return permission === "granted";
+  // Try requesting even if it says it's missing (webview quirks)
+  try {
+      if (!("Notification" in window)) {
+        console.warn("Notification object missing, skipping requestPermission");
+      } else {
+        if (Notification.permission !== "granted") {
+            const permission = await Notification.requestPermission();
+            return permission === "granted";
+        }
+      }
+  } catch (e) {
+      console.error("Forced request permission failed", e);
   }
   return true;
 };
@@ -18,21 +21,8 @@ export interface NotificationResult {
 }
 
 export const sendSystemNotification = async (title: string, body: string, onClick?: () => void): Promise<NotificationResult> => {
-  if (!("Notification" in window)) {
-    return { success: false, error: "Browser ondersteunt geen notificaties." };
-  }
-
-  // REMOVED: The strict check blocking 'denied' status. 
-  // We now try to send regardless. If it's truly denied, the browser will throw an error in the try/catch blocks below.
-  // This fixes the issue where the app thinks it's denied (stale state) but the user actually granted it.
-  
-  if (Notification.permission === "default") {
-      try {
-        await Notification.requestPermission();
-      } catch (e) {
-        console.warn("Auto-request permission failed", e);
-      }
-  }
+  // We skip the check if !("Notification" in window) to force execution flow down to Service Worker
+  // which might exist independently in some PWA contexts.
 
   const options: any = {
     body,
@@ -48,33 +38,34 @@ export const sendSystemNotification = async (title: string, body: string, onClic
   let errorLog = "";
   let swSuccess = false;
 
-  // 1. Try Service Worker (Preferred for Mobile/PWA)
-  // Even if window.Notification.permission says denied, SW might have independent access on some Android versions.
+  // 1. Try Service Worker (Preferred/Forced)
   try {
     if ('serviceWorker' in navigator) {
+      // We try to get registration. If it exists, we use it. 
+      // Note: We don't check for 'active' state strictly, we just try to call showNotification.
       const registration = await navigator.serviceWorker.getRegistration();
       if (registration) {
-        if (!registration.active) {
-            errorLog += "[SW found but not active] ";
-        } else {
-            // Trying to show notification via SW
+         try {
             await registration.showNotification(title, options);
             swSuccess = true;
             return { success: true };
-        }
+         } catch (swErr: any) {
+             errorLog += `[SW showNotification failed: ${swErr.message}] `;
+         }
       } else {
-        errorLog += "[No SW registration found] ";
+        errorLog += "[No SW registration] ";
       }
     } else {
-        errorLog += "[No SW support] ";
+        errorLog += "[No navigator.serviceWorker] ";
     }
   } catch (e: any) {
-    errorLog += `[SW Error: ${e.message || e}] `;
+    errorLog += `[SW Access Error: ${e.message || e}] `;
   }
 
-  // 2. Fallback to Standard Web API
+  // 2. Fallback to Standard Web API (Forced)
   if (!swSuccess) {
       try {
+        // We construct the object even if permission is 'denied' in the hope that it's a false flag
         const notification = new Notification(title, options);
         
         if (onClick) {
@@ -93,6 +84,6 @@ export const sendSystemNotification = async (title: string, body: string, onClic
   }
 
   // If we reach here, both failed
-  console.error("Notification failures:", errorLog);
+  console.error("Notification forced attempts failed:", errorLog);
   return { success: false, error: errorLog.trim() };
 };
