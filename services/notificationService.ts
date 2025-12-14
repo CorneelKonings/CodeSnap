@@ -15,33 +15,49 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
   return false;
 };
 
-export const sendSystemNotification = (title: string, body: string, onClick?: () => void) => {
-  if (Notification.permission === "granted") {
-    // Check if service worker is ready (for PWA capabilities) or fall back to standard notification
+export const sendSystemNotification = async (title: string, body: string, onClick?: () => void) => {
+  if (Notification.permission !== "granted") {
+    console.warn("Notification permission not granted");
+    return false;
+  }
+
+  const options: any = {
+    body,
+    icon: 'https://vitejs.dev/logo.svg',
+    badge: 'https://vitejs.dev/logo.svg', // Android small icon
+    vibrate: [200, 100, 200],
+    tag: 'codesnap-otp',
+    renotify: true,
+    requireInteraction: true,
+    data: { url: window.location.href } // Data for SW to use
+  };
+
+  try {
+    // 1. Try Service Worker (Best for Mobile/PWA)
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (registration) {
+      await registration.showNotification(title, options);
+      return true;
+    } 
     
-    const options: any = {
-      body,
-      icon: 'https://vitejs.dev/logo.svg', // App Icon
-      badge: 'https://vitejs.dev/logo.svg', // Small badge for Android bar
-      vibrate: [200, 100, 200], // Vibrate pattern
-      tag: 'codesnap-otp', // Prevents stacking too many notifications
-      renotify: true, // Play sound/vibrate again even if one is already open
-      requireInteraction: true, // CRITICAL: Keeps notification on screen until user interacts
-      silent: false
-    };
-
+    // 2. Fallback to Standard Web API (Desktop)
     const notification = new Notification(title, options);
-
+    
     if (onClick) {
       notification.onclick = (e) => {
         e.preventDefault();
-        // Attempt to focus the window
-        window.focus(); 
+        window.focus();
         if (window.opener) window.opener.focus();
-        
         onClick();
         notification.close();
       };
     }
+    return true;
+
+  } catch (error) {
+    console.error("Notification failed:", error);
+    // Fallback alert if everything fails, so user knows it tried
+    // alert(`NIEUWE CODE: ${title}\n${body}`); 
+    return false;
   }
 };

@@ -23,14 +23,16 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   
   // Notification Permission State
-  const [permissionState, setPermissionState] = useState<NotificationPermission>(Notification.permission);
+  const [permissionState, setPermissionState] = useState<NotificationPermission>(
+    "Notification" in window ? Notification.permission : 'default'
+  );
 
   // Tracking processed emails to prevent duplicates and loops
   const [processedIds, setProcessedIds] = useState<Set<string>>(new Set());
 
   // Initialize Google Auth & LocalStorage
   useEffect(() => {
-    // 1. Check Permission State on load (but do NOT request it automatically, browsers block this)
+    // 1. Check Permission State on load
     if ("Notification" in window) {
       setPermissionState(Notification.permission);
     }
@@ -70,13 +72,13 @@ export default function App() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Handler for Manual Permission Request (Crucial for System Notifications)
+  // Handler for Manual Permission Request
   const handleEnableNotifications = async () => {
     const granted = await requestNotificationPermission();
     setPermissionState(granted ? 'granted' : 'denied');
     
     if (granted) {
-      sendSystemNotification(
+      await sendSystemNotification(
         "Meldingen actief! 🔔",
         "Je ontvangt nu codes rechtstreeks op je apparaat.",
         () => window.focus()
@@ -84,13 +86,28 @@ export default function App() {
     }
   };
   
-  const sendTestNotification = () => {
-    sendSystemNotification(
+  const handleTestNotification = async () => {
+    if (permissionState !== 'granted') {
+      const granted = await requestNotificationPermission();
+      setPermissionState(granted ? 'granted' : 'denied');
+      if (!granted) {
+        showToast("Meldingen zijn geweigerd.");
+        return;
+      }
+    }
+
+    const success = await sendSystemNotification(
       "Test Melding 🚀",
       "Als je dit ziet, werkt het op je apparaat!",
       () => window.focus()
     );
-    showToast("Test verstuurd naar apparaat");
+
+    if (success) {
+      showToast("Test verstuurd naar apparaat");
+    } else {
+      showToast("Kon geen melding sturen. Check instellingen.");
+      alert("Het systeem blokkeert de melding. Controleer je 'Niet storen' of browserinstellingen.");
+    }
   };
 
   // PREVENT ACCIDENTAL CLOSING
@@ -154,13 +171,14 @@ export default function App() {
            if (!manual) {
                showToast(`Code gevonden: ${newCode.code}`);
                
+               // Audio feedback
                try {
                  const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
                  audio.volume = 1.0;
                  audio.play().catch(() => {});
                } catch (e) {}
                
-               // SEND SYSTEM NOTIFICATION (ON DEVICE)
+               // SEND SYSTEM NOTIFICATION
                sendSystemNotification(
                  `${newCode.code} - ${newCode.serviceName}`,
                  `Klik hier om de code te kopiëren.`,
@@ -306,7 +324,7 @@ export default function App() {
                      🔔 Meldingen aan
                    </span>
                    <button 
-                     onClick={sendTestNotification}
+                     onClick={handleTestNotification}
                      className="text-[10px] bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded border border-slate-700 transition-colors"
                    >
                      Test Melding
