@@ -74,6 +74,21 @@ export default function App() {
     return () => clearTimeout(timer);
   }, []);
 
+  // PREVENT ACCIDENTAL CLOSING
+  // This keeps the app "alive" by warning the user if they click X
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (accessToken) {
+        // Standard way to trigger browser confirmation dialog
+        e.preventDefault();
+        e.returnValue = 'Als je de pagina sluit, stopt het scannen. Minimaliseer het venster in plaats van te sluiten.';
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [accessToken]);
+
   const handleLogout = () => {
     signOut();
     setAccessToken(null);
@@ -137,22 +152,32 @@ export default function App() {
            if (prev.some(pc => pc.id === newCode.id)) return prev;
 
            if (!manual) {
-               showToast(`Nieuwe code gevonden!`);
-               const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
-               audio.volume = 0.5;
-               audio.play().catch(() => {});
+               showToast(`Code gevonden: ${newCode.code}`);
                
-               // Notification Logic with Copy Functionality
+               // Play Sound
+               try {
+                 const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
+                 audio.volume = 1.0;
+                 audio.play().catch(e => console.log("Audio autoplay blocked (user inactive)", e));
+               } catch (e) {
+                 console.error("Audio error", e);
+               }
+               
+               // Send Sticky Notification
                sendSystemNotification(
-                 `${newCode.serviceName}: ${newCode.code}`,
-                 `Klik hier om code ${newCode.code} te kopiëren`,
+                 `${newCode.code} - ${newCode.serviceName}`,
+                 `Klik om direct te kopiëren.`,
                  () => {
-                   window.focus(); // Focus window first
+                   window.focus(); 
+                   // Small delay to allow window to gain focus before clipboard write
                    setTimeout(() => {
                       navigator.clipboard.writeText(newCode.code)
                         .then(() => showToast("Gekopieerd vanaf notificatie!"))
-                        .catch(err => console.error("Copy failed", err));
-                   }, 100);
+                        .catch(err => {
+                          console.error("Copy failed from notification", err);
+                          showToast("Kon niet automatisch kopiëren. Klik op de kaart.");
+                        });
+                   }, 300);
                  }
                );
            } else {
@@ -244,15 +269,48 @@ export default function App() {
     }
   };
 
-  // Polling
+  // WEB WORKER POLLING
+  // Instead of a simple setInterval which browsers throttle in background tabs,
+  // we use a Web Worker which runs on a separate thread and keeps timing accurate.
   useEffect(() => {
     if (accessToken) {
-      // Immediate fetch on mount/restore
+      // 1. Fetch immediately
       handleFetchEmails();
       
-      // Periodic poll
-      const interval = setInterval(handleFetchEmails, 5000); 
-      return () => clearInterval(interval);
+      // 2. Setup Worker
+      const workerScript = `
+        let intervalId = null;
+        self.onmessage = function(e) {
+          if (e.data === 'start') {
+             if (intervalId) clearInterval(intervalId);
+             // 5 seconds interval
+             intervalId = setInterval(() => {
+               self.postMessage('tick');
+             }, 5000);
+          } else if (e.data === 'stop') {
+             if (intervalId) clearInterval(intervalId);
+          }
+        };
+      `;
+      
+      const blob = new Blob([workerScript], { type: 'application/javascript' });
+      const workerUrl = URL.createObjectURL(blob);
+      const worker = new Worker(workerUrl);
+
+      worker.onmessage = (e) => {
+        if (e.data === 'tick') {
+           console.log("Worker tick - fetching emails...");
+           handleFetchEmails();
+        }
+      };
+
+      worker.postMessage('start');
+
+      return () => {
+        worker.postMessage('stop');
+        worker.terminate();
+        URL.revokeObjectURL(workerUrl);
+      };
     }
   }, [accessToken, handleFetchEmails]);
 
@@ -280,7 +338,7 @@ export default function App() {
                      <div className="flex items-center gap-3">
                         <span className="text-xs text-green-400 flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                            Live
+                            Actief
                         </span>
                         <button onClick={handleLogout} className="text-xs text-slate-500 hover:text-red-400 underline">
                           Uitloggen
@@ -291,6 +349,12 @@ export default function App() {
                    )}
                 </div>
             </div>
+            {/* Minimalization Hint */}
+            {accessToken && (
+              <div className="mt-2 p-2 bg-blue-900/20 border border-blue-500/30 rounded text-[10px] text-blue-200">
+                <p>💡 Tip: Laat dit tabblad open (of geminimaliseerd) om codes te blijven ontvangen.</p>
+              </div>
+            )}
           </div>
         </div>
         
