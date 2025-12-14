@@ -1,18 +1,20 @@
 export const requestNotificationPermission = async (): Promise<boolean> => {
-  // Try requesting even if it says it's missing (webview quirks)
   try {
       if (!("Notification" in window)) {
-        console.warn("Notification object missing, skipping requestPermission");
-      } else {
-        if (Notification.permission !== "granted") {
-            const permission = await Notification.requestPermission();
-            return permission === "granted";
-        }
+        console.warn("Notification API not supported");
+        return false;
       }
+      
+      if (Notification.permission !== "granted") {
+          const permission = await Notification.requestPermission();
+          return permission === "granted";
+      }
+      
+      return true;
   } catch (e) {
-      console.error("Forced request permission failed", e);
+      console.error("Permission request error:", e);
+      return false;
   }
-  return true;
 };
 
 export interface NotificationResult {
@@ -21,69 +23,58 @@ export interface NotificationResult {
 }
 
 export const sendSystemNotification = async (title: string, body: string, onClick?: () => void): Promise<NotificationResult> => {
-  // We skip the check if !("Notification" in window) to force execution flow down to Service Worker
-  // which might exist independently in some PWA contexts.
-
   const options: any = {
     body,
-    icon: 'https://vitejs.dev/logo.svg',
-    badge: 'https://vitejs.dev/logo.svg',
+    icon: '/vite.svg', // Use local icon if possible, or fallback to external
     vibrate: [200, 100, 200],
-    tag: 'codesnap-otp',
+    tag: 'codesnap-otp-' + Date.now(), // Unique tag to ensure every code triggers a new alert
     renotify: true,
     requireInteraction: true,
     data: { url: window.location.href }
   };
 
   let errorLog = "";
-  let swSuccess = false;
 
-  // 1. Try Service Worker (Preferred/Forced)
+  // STRATEGY 1: Service Worker (The only reliable way on Android/Mobile)
   try {
     if ('serviceWorker' in navigator) {
-      // We try to get registration. If it exists, we use it. 
-      // Note: We don't check for 'active' state strictly, we just try to call showNotification.
-      const registration = await navigator.serviceWorker.getRegistration();
-      if (registration) {
+      // Wait for the service worker to be fully active and ready
+      const registration = await navigator.serviceWorker.ready;
+      
+      if (registration && registration.active) {
          try {
             await registration.showNotification(title, options);
-            swSuccess = true;
             return { success: true };
          } catch (swErr: any) {
-             errorLog += `[SW showNotification failed: ${swErr.message}] `;
+             console.error("SW showNotification failed:", swErr);
+             errorLog += `[SW Error: ${swErr.message}] `;
          }
       } else {
-        errorLog += "[No SW registration] ";
+        errorLog += "[SW not ready] ";
       }
-    } else {
-        errorLog += "[No navigator.serviceWorker] ";
     }
   } catch (e: any) {
-    errorLog += `[SW Access Error: ${e.message || e}] `;
+    errorLog += `[SW Access Error: ${e.message}] `;
   }
 
-  // 2. Fallback to Standard Web API (Forced)
-  if (!swSuccess) {
-      try {
-        // We construct the object even if permission is 'denied' in the hope that it's a false flag
-        const notification = new Notification(title, options);
-        
-        if (onClick) {
-          notification.onclick = (e) => {
-            e.preventDefault();
-            window.focus();
-            if (window.opener) window.opener.focus();
-            onClick();
-            notification.close();
-          };
-        }
-        return { success: true };
-      } catch (e: any) {
-        errorLog += `[Standard Error: ${e.message || e}]`;
-      }
+  // STRATEGY 2: Desktop Fallback (new Notification)
+  // Only works reliably on Desktop Chrome/Firefox/Safari
+  try {
+    const notification = new Notification(title, options);
+    
+    if (onClick) {
+      notification.onclick = (e) => {
+        e.preventDefault();
+        window.focus();
+        onClick();
+        notification.close();
+      };
+    }
+    return { success: true };
+  } catch (e: any) {
+    errorLog += `[Standard API Error: ${e.message}]`;
   }
 
-  // If we reach here, both failed
-  console.error("Notification forced attempts failed:", errorLog);
+  console.error("All notification strategies failed:", errorLog);
   return { success: false, error: errorLog.trim() };
 };

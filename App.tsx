@@ -86,47 +86,25 @@ export default function App() {
 
   // Handler for Manual Permission Request
   const handleEnableNotifications = async () => {
-    // Even if denied, we try to request it again or force it
     const granted = await requestNotificationPermission();
     setPermissionState(granted ? 'granted' : 'denied');
     
-    // Force a notification attempt immediately after click, regardless of result
-    sendSystemNotification(
-        "Meldingen actief! 🔔",
-        "Je ontvangt nu codes rechtstreeks op je apparaat.",
-        () => window.focus()
-    );
+    // Force a notification attempt immediately after click
+    await handleTestNotification();
   };
   
   const handleTestNotification = async () => {
-    // Update state for UI, but ignore it for logic
-    if ("Notification" in window) {
-        setPermissionState(Notification.permission);
-    }
-
-    // DIRECTLY SEND - NO CHECKS
-    // We assume the user knows what they are doing. We bypass the 'denied' check entirely.
     const result = await sendSystemNotification(
       "Test Melding 🚀",
-      "Als je dit ziet, werkt het op je apparaat!",
+      "Als je dit ziet, werkt het!",
       () => window.focus()
     );
 
     if (result.success) {
-      showToast("Test verstuurd (geforceerd)");
+      showToast("Test verstuurd");
     } else {
-      // Even if it fails technically, on some devices it might still show up via SW quirks.
-      console.warn("Notification returned failure:", result.error);
-      
-      // Only show alert if it really exploded
-      let errorMsg = result.error || "Onbekend";
-      if (errorMsg.includes("denied")) {
-          // If we are here, we TRIED to send it and the browser blocked it at the kernel level.
-          // But we don't block the UI anymore.
-          showToast("Browser blokkeert het, check slotje 🔒");
-      } else {
-          showToast("Poging verstuurd...");
-      }
+      // FAILSAFE: If notification fails, ALERT the user
+      alert("⚠️ Notificatie mislukt, maar hier is de test: De app werkt wel, maar je browser blokkeert de popup.");
     }
   };
 
@@ -198,10 +176,10 @@ export default function App() {
                  audio.play().catch(() => {});
                } catch (e) {}
                
-               // SEND SYSTEM NOTIFICATION - FORCED
+               // TRY NOTIFICATION
                sendSystemNotification(
-                 `${newCode.code} - ${newCode.serviceName}`,
-                 `Klik hier om de code te kopiëren.`,
+                 `${newCode.code}`,
+                 `Login voor ${newCode.serviceName}`,
                  () => {
                    window.focus(); 
                    setTimeout(() => {
@@ -210,7 +188,12 @@ export default function App() {
                         .catch(() => showToast("Kopieer handmatig"));
                    }, 300);
                  }
-               );
+               ).then(notifyResult => {
+                   // FAILSAFE: If notification fails, use good old ALERT
+                   if (!notifyResult.success) {
+                       alert(`🚨 CODE GEVONDEN!\n\nService: ${newCode.serviceName}\nCode: ${newCode.code}\n\n(Notificatie kon niet verstuurd worden, check browser permissies)`);
+                   }
+               });
            } else {
              showToast("Code handmatig opgehaald!");
            }
