@@ -25,17 +25,42 @@ export default function App() {
   // Tracking processed emails to prevent duplicates and loops
   const [processedIds, setProcessedIds] = useState<Set<string>>(new Set());
 
-  // Initialize Google Auth and Notification Permission
+  // Initialize Google Auth, Notification Permission, and Check LocalStorage
   useEffect(() => {
+    // 1. Request Notifications
     requestNotificationPermission().then(granted => {
       if (granted) console.log("Notificaties toegestaan");
     });
 
+    // 2. Check for existing session in localStorage
+    const storedToken = localStorage.getItem('google_access_token');
+    const storedTime = localStorage.getItem('google_token_time');
+    
+    if (storedToken && storedTime) {
+      const ageInMinutes = (Date.now() - parseInt(storedTime)) / 1000 / 60;
+      // Tokens expire after 60 mins. We use 55 mins as a safety buffer.
+      if (ageInMinutes < 55) {
+        console.log("Restoring session from storage");
+        setAccessToken(storedToken);
+      } else {
+        console.log("Session expired, clearing storage");
+        localStorage.removeItem('google_access_token');
+        localStorage.removeItem('google_token_time');
+      }
+    }
+
+    // 3. Initialize Google Auth Client (needed for re-login or fresh login)
     const timer = setTimeout(() => {
       const initialized = initGoogleAuth(
         (token) => {
+          // Success Callback
           setAccessToken(token);
           setAuthError(null);
+          
+          // Save to storage
+          localStorage.setItem('google_access_token', token);
+          localStorage.setItem('google_token_time', Date.now().toString());
+          
           showToast("Gmail verbonden!");
         },
         (error) => {
@@ -57,18 +82,22 @@ export default function App() {
     setAuthError(null);
     setScanResults({});
     setProcessedIds(new Set());
+    
+    // Clear storage
+    localStorage.removeItem('google_access_token');
+    localStorage.removeItem('google_token_time');
+    
     showToast("Uitgelogd");
   };
 
   // Logic to determine if an email is worth sending to AI
   const needsAnalysis = (email: EmailMessage): boolean => {
-    // FORCE SCAN: If email is younger than 10 minutes (increased from 5), ALWAYS scan it.
+    // FORCE SCAN: If email is younger than 10 minutes, ALWAYS scan it.
     const emailDate = new Date(parseInt(email.internalDate));
     const now = new Date();
     const ageInMinutes = (now.getTime() - emailDate.getTime()) / 60000;
     
     if (ageInMinutes < 10) {
-      console.log(`Force scanning recent email (${ageInMinutes.toFixed(1)}m old): ${email.subject}`);
       return true;
     }
 
@@ -112,12 +141,18 @@ export default function App() {
                const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3');
                audio.volume = 0.5;
                audio.play().catch(() => {});
+               
+               // Notification Logic with Copy Functionality
                sendSystemNotification(
                  `${newCode.serviceName}: ${newCode.code}`,
-                 `Tik hier om code te kopiëren`,
+                 `Klik hier om code ${newCode.code} te kopiëren`,
                  () => {
-                   navigator.clipboard.writeText(newCode.code);
-                   window.focus();
+                   window.focus(); // Focus window first
+                   setTimeout(() => {
+                      navigator.clipboard.writeText(newCode.code)
+                        .then(() => showToast("Gekopieerd vanaf notificatie!"))
+                        .catch(err => console.error("Copy failed", err));
+                   }, 100);
                  }
                );
            } else {
@@ -139,7 +174,7 @@ export default function App() {
     if (!accessToken) return;
     
     setIsProcessing(true);
-    setAuthError(null); // Reset error before trying
+    setAuthError(null); 
 
     try {
       const recentEmails = await fetchRecentEmails(accessToken);
@@ -161,7 +196,6 @@ export default function App() {
 
       console.log(`Scanning ${emailsToAnalyze.length} new emails...`);
 
-      // Process strictly sequentially to avoid hitting rate limits and to update UI clearly
       for (const email of emailsToAnalyze) {
         if (needsAnalysis(email)) {
           await processEmail(email);
@@ -174,16 +208,21 @@ export default function App() {
       console.error("Fout tijdens ophalen:", error);
       const msg = error.message || String(error);
       
-      // Determine user-friendly error message
       if (msg.includes("403")) {
          if (msg.includes("API has not been used") || msg.includes("disabled")) {
              setAuthError("De Gmail API staat UIT in Google Cloud. Zet deze aan.");
          } else {
              setAuthError("Geen toegang. Log opnieuw in en vink alles aan.");
+             // Token invalid, clear storage
+             localStorage.removeItem('google_access_token');
+             localStorage.removeItem('google_token_time');
+             setAccessToken(null);
          }
       } else if (msg.includes("401")) {
          setAuthError("Sessie verlopen. Log opnieuw in.");
          setAccessToken(null);
+         localStorage.removeItem('google_access_token');
+         localStorage.removeItem('google_token_time');
       } else {
          setAuthError(`Fout: ${msg}`);
       }
@@ -208,8 +247,11 @@ export default function App() {
   // Polling
   useEffect(() => {
     if (accessToken) {
+      // Immediate fetch on mount/restore
       handleFetchEmails();
-      const interval = setInterval(handleFetchEmails, 5000); // Poll every 5 seconds
+      
+      // Periodic poll
+      const interval = setInterval(handleFetchEmails, 5000); 
       return () => clearInterval(interval);
     }
   }, [accessToken, handleFetchEmails]);
@@ -218,8 +260,6 @@ export default function App() {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
   };
-
-  const currentOrigin = window.location.origin;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col md:flex-row overflow-hidden max-w-7xl mx-auto shadow-2xl shadow-black">
@@ -237,9 +277,15 @@ export default function App() {
                 </h1>
                 <div className="flex items-center gap-2 ml-10">
                    {accessToken ? (
-                     <button onClick={handleLogout} className="text-xs text-red-400 hover:text-red-300 underline">
-                       Uitloggen
-                     </button>
+                     <div className="flex items-center gap-3">
+                        <span className="text-xs text-green-400 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                            Live
+                        </span>
+                        <button onClick={handleLogout} className="text-xs text-slate-500 hover:text-red-400 underline">
+                          Uitloggen
+                        </button>
+                     </div>
                    ) : (
                      <p className="text-xs text-slate-500">Auto-Scan Inactief</p>
                    )}
